@@ -1,5 +1,5 @@
 import numbers
-import os
+import os, sys
 import queue as Queue
 import threading
 from typing import Iterable
@@ -15,12 +15,21 @@ from torchvision.datasets import ImageFolder
 from utils.utils_distributed_sampler import DistributedSampler
 from utils.utils_distributed_sampler import get_dist_info, worker_init_fn
 
+from dataloaders.oulu_npu_frames_3d_hrn import OULU_NPU_FRAMES_3D_HRN
+from dataloaders.oulu_npu_frames import OULU_NPU_FRAMES
+
 
 def get_dataloader(
-    root_dir,
+    train_dataset,  # Bernardo
+    protocol_id,    # Bernardo
+    root_dir,       # original
+    frames_path,    # Bernardo
+    img_size,       # Bernardo
+    part,           # 'train', 'val' or 'test'
     local_rank,
     batch_size,
     dali = False,
+    dali_aug = False,
     seed = 2048,
     num_workers = 2,
     ) -> Iterable:
@@ -40,18 +49,31 @@ def get_dataloader(
 
     # Image Folder
     else:
+        # original from insightface (commented by Bernardo)
+        # transform = transforms.Compose([
+        #      transforms.RandomHorizontalFlip(),
+        #      transforms.ToTensor(),
+        #      transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+        #      ])
+        # train_set = ImageFolder(root_dir, transform)
+
+        # Bernardo (for face anti-spoofing detection)
         transform = transforms.Compose([
-             transforms.RandomHorizontalFlip(),
-             transforms.ToTensor(),
-             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
-             ])
-        train_set = ImageFolder(root_dir, transform)
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+                ])
+        if train_dataset == 'oulu-npu_frames_mini':
+            train_set = OULU_NPU_FRAMES(root_dir, protocol_id, frames_path, img_size, part, \
+                                               local_rank=local_rank, transform=transform)
+        else:
+            raise Exception(f'Error: dataloader not implemented for dataset \'{train_dataset}\'.')
 
     # DALI
     if dali:
         return dali_data_iter(
             batch_size=batch_size, rec_file=rec, idx_file=idx,
-            num_threads=2, local_rank=local_rank)
+            num_threads=2, local_rank=local_rank, dali_aug=dali_aug)
 
     rank, world_size = get_dist_info()
     train_sampler = DistributedSampler(
@@ -85,7 +107,7 @@ class BackgroundGenerator(threading.Thread):
         self.start()
 
     def run(self):
-        torch.cuda.set_device(self.local_rank)
+        # torch.cuda.set_device(self.local_rank)
         for item in self.generator:
             self.queue.put(item)
         self.queue.put(None)
@@ -107,7 +129,7 @@ class DataLoaderX(DataLoader):
 
     def __init__(self, local_rank, **kwargs):
         super(DataLoaderX, self).__init__(**kwargs)
-        self.stream = torch.cuda.Stream(local_rank)
+        # self.stream = torch.cuda.Stream(local_rank)
         self.local_rank = local_rank
 
     def __iter__(self):
@@ -120,12 +142,12 @@ class DataLoaderX(DataLoader):
         self.batch = next(self.iter, None)
         if self.batch is None:
             return None
-        with torch.cuda.stream(self.stream):
-            for k in range(len(self.batch)):
-                self.batch[k] = self.batch[k].to(device=self.local_rank, non_blocking=True)
+        # with torch.cuda.stream(self.stream):
+        #     for k in range(len(self.batch)):
+        #         self.batch[k] = self.batch[k].to(device=self.local_rank, non_blocking=True)
 
     def __next__(self):
-        torch.cuda.current_stream().wait_stream(self.stream)
+        # torch.cuda.current_stream().wait_stream(self.stream)
         batch = self.batch
         if batch is None:
             raise StopIteration
@@ -194,7 +216,9 @@ def dali_data_iter(
     initial_fill=32768, random_shuffle=True,
     prefetch_queue_depth=1, local_rank=0, name="reader",
     mean=(127.5, 127.5, 127.5), 
-    std=(127.5, 127.5, 127.5)):
+    std=(127.5, 127.5, 127.5),
+    dali_aug=False
+    ):
     """
     Parameters:
     ----------
@@ -209,6 +233,34 @@ def dali_data_iter(
     from nvidia.dali.pipeline import Pipeline
     from nvidia.dali.plugin.pytorch import DALIClassificationIterator
 
+    def dali_random_resize(img, resize_size, image_size=112):
+        img = fn.resize(img, resize_x=resize_size, resize_y=resize_size)
+        img = fn.resize(img, size=(image_size, image_size))
+        return img
+    def dali_random_gaussian_blur(img, window_size):
+        img = fn.gaussian_blur(img, window_size=window_size * 2 + 1)
+        return img
+    def dali_random_gray(img, prob_gray):
+        saturate = fn.random.coin_flip(probability=1 - prob_gray)
+        saturate = fn.cast(saturate, dtype=types.FLOAT)
+        img = fn.hsv(img, saturation=saturate)
+        return img
+    def dali_random_hsv(img, hue, saturation):
+        img = fn.hsv(img, hue=hue, saturation=saturation)
+        return img
+    def multiplexing(condition, true_case, false_case):
+        neg_condition = condition ^ True
+        return condition * true_case + neg_condition * false_case
+
+    condition_resize = fn.random.coin_flip(probability=0.1)
+    size_resize = fn.random.uniform(range=(int(112 * 0.5), int(112 * 0.8)), dtype=types.FLOAT)
+    condition_blur = fn.random.coin_flip(probability=0.2)
+    window_size_blur = fn.random.uniform(range=(1, 2), dtype=types.INT32)
+    condition_flip = fn.random.coin_flip(probability=0.5)
+    condition_hsv = fn.random.coin_flip(probability=0.2)
+    hsv_hue = fn.random.uniform(range=(0., 20.), dtype=types.FLOAT)
+    hsv_saturation = fn.random.uniform(range=(1., 1.2), dtype=types.FLOAT)
+
     pipe = Pipeline(
         batch_size=batch_size, num_threads=num_threads,
         device_id=local_rank, prefetch_queue_depth=prefetch_queue_depth, )
@@ -219,6 +271,13 @@ def dali_data_iter(
             num_shards=world_size, shard_id=rank,
             random_shuffle=random_shuffle, pad_last_batch=False, name=name)
         images = fn.decoders.image(jpegs, device="mixed", output_type=types.RGB)
+        if dali_aug:
+            images = fn.cast(images, dtype=types.UINT8)
+            images = multiplexing(condition_resize, dali_random_resize(images, size_resize, image_size=112), images)
+            images = multiplexing(condition_blur, dali_random_gaussian_blur(images, window_size_blur), images)
+            images = multiplexing(condition_hsv, dali_random_hsv(images, hsv_hue, hsv_saturation), images)
+            images = dali_random_gray(images, 0.1)
+
         images = fn.crop_mirror_normalize(
             images, dtype=types.FLOAT, mean=mean, std=std, mirror=condition_flip)
         pipe.set_outputs(images, labels)

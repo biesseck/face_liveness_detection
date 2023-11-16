@@ -67,9 +67,14 @@ class IBasicBlock(nn.Module):
 class IResNet(nn.Module):
     fc_scale = 7 * 7
     def __init__(self,
-                 block, layers, dropout=0, num_features=512, zero_init_residual=False,
+                 block, layers, img_size=112, dropout=0, num_features=512, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None, fp16=False):
         super(IResNet, self).__init__()
+
+        # Bernardo
+        if img_size == 224:      # Default value used in '3DPC-Net: 3D Point Cloud Network for Face Anti-spoofing' (https://ieeexplore.ieee.org/document/9304873)
+            self.fc_scale *= 4   # due an image 224x224 contains 4 times more pixels than 112x112
+
         self.extra_gflops = 0.0
         self.fp16 = fp16
         self.inplanes = 64

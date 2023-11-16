@@ -130,11 +130,11 @@ class PartialFC_V2(torch.nn.Module):
             f"last batch size do not equal current batch size: {self.last_batch_size} vs {batch_size}")
 
         _gather_embeddings = [
-            torch.zeros((batch_size, self.embedding_size)).cuda()
+            torch.zeros((batch_size, self.embedding_size))
             for _ in range(self.world_size)
         ]
         _gather_labels = [
-            torch.zeros(batch_size).long().cuda() for _ in range(self.world_size)
+            torch.zeros(batch_size).long() for _ in range(self.world_size)
         ]
         _list_embeddings = AllGather(local_embeddings, *_gather_embeddings)
         distributed.all_gather(_gather_labels, local_labels)
@@ -161,10 +161,18 @@ class PartialFC_V2(torch.nn.Module):
         if self.fp16:
             logits = logits.float()
         logits = logits.clamp(-1, 1)
-
+    
+        # original
+        # logits = self.margin_softmax(logits, labels)
+        # loss = self.dist_cross_entropy(logits, labels)
+        # return loss
+    
+        # Bernardo
         logits = self.margin_softmax(logits, labels)
         loss = self.dist_cross_entropy(logits, labels)
-        return loss
+        probabilities = torch.nn.functional.softmax(logits, dim=1)
+        pred_labels = torch.argmax(probabilities, dim=1)
+        return loss, pred_labels
 
 
 class DistCrossEntropyFunc(torch.autograd.Function):
