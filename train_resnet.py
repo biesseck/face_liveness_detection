@@ -235,7 +235,7 @@ def main(args):
     for epoch in range(start_epoch, cfg.max_epoch):
         if isinstance(train_loader, DataLoader):
             train_loader.sampler.set_epoch(epoch)
-        for _, (img, local_labels) in enumerate(train_loader):             # original
+        for train_idx, (img, local_labels) in enumerate(train_loader):             # original
             backbone.train()            # Bernardo
             module_partial_fc.train()   # Bernardo
 
@@ -264,23 +264,23 @@ def main(args):
 
             train_evaluator.update(pred_labels, local_labels)
 
+            print(f'train_idx: {train_idx}')
+            with torch.no_grad():
+                if wandb_logger:
+                    wandb_logger.log({
+                        # 'Loss/Step Loss': loss.item(),
+                        'Loss/Train Loss': loss_am.avg,
+                        # 'Process/Step': global_step,
+                        'Process/Epoch': epoch
+                    })
 
-        with torch.no_grad():
-            if wandb_logger:
-                wandb_logger.log({
-                    # 'Loss/Step Loss': loss.item(),
-                    'Loss/Train Loss': loss_am.avg,
-                    # 'Process/Step': global_step,
-                    'Process/Epoch': epoch
-                })
+                # print('Train:    train_loss:', loss_am.avg)
+                callback_logging(global_step, loss_am, train_evaluator, epoch, cfg.fp16, lr_scheduler.get_last_lr()[0], amp)
+                loss_am.reset()
+                train_evaluator.reset()
 
-            # print('Train:    train_loss:', loss_am.avg)
-            callback_logging(global_step, loss_am, train_evaluator, epoch, cfg.fp16, lr_scheduler.get_last_lr()[0], amp)
-            loss_am.reset()
-            train_evaluator.reset()
-
-            validate(module_partial_fc, backbone, val_loader, val_evaluator, global_step, epoch, summary_writer)   # Bernardo
-            print('--------------')
+                validate(module_partial_fc, backbone, val_loader, val_evaluator, global_step, epoch, summary_writer)   # Bernardo
+                print('--------------')
 
 
         if cfg.save_all_states:

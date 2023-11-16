@@ -34,7 +34,8 @@ config.weight_decay = 5e-4
 # config.weight_decay = 0.1
 
 config.verbose = 2000
-config.frequent = 10
+# config.frequent = 10
+config.frequent = 1
 
 # For Large Sacle Dataset, such as WebFace42M
 config.dali = False 
