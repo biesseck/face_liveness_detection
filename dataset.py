@@ -63,7 +63,7 @@ def get_dataloader(
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
                 ])
-        if train_dataset == 'oulu-npu_frames_mini':
+        if train_dataset == 'oulu-npu_frames':
             train_set = OULU_NPU_FRAMES(root_dir, protocol_id, frames_path, img_size, part, \
                                                local_rank=local_rank, transform=transform)
         else:

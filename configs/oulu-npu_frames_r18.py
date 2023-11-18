@@ -38,9 +38,9 @@ config.verbose = 1    # Bernardo
 config.dali = False
 config.dali_aug = False
 
-# config.rec = "/train_tmp/ms1m-retinaface-t1"                                                # original
-config.train_dataset = 'oulu-npu_frames_mini'                                                 # Bernardo
-config.protocol_id = 1                                                                        # Bernardo
+# config.rec = "/train_tmp/ms1m-retinaface-t1"                               # original
+config.train_dataset = 'oulu-npu_frames'                                     # Bernardo
+config.protocol_id = 1                                                       # Bernardo
 config.dataset_path = '/datasets_ufpr/liveness/oulu-npu_frames_crop224x224'  # Bernardo
 # config.frames_path = ''  # Bernardo
 
